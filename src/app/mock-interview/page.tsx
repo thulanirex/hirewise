@@ -69,7 +69,7 @@ type MultiPartQuestion = {
 
 
 
-export default function MockInterview() {
+const MockInterview = () => {
   const { isLoading, generateInterviewQuestion, generateInterviewFeedback } = useGeminiAI();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1006,4 +1006,8 @@ export default function MockInterview() {
       </>
     </Suspense>
   );
+  
 }
+
+export default MockInterview;
+
