@@ -1,0 +1,290 @@
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { FiMic, FiMicOff, FiClock, FiChevronRight, FiX, FiSmile, FiMeh, FiFrown, FiLoader, FiArrowLeft, FiCheckCircle, FiBarChart2 } from 'react-icons/fi';
+import { Navbar } from '@/components/layout/Navbar';
+import { useGeminiAI } from '@/hooks/useGeminiAI';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+
+// Define interface for enhanced feedback structure
+interface FeedbackItem {
+  score: number;
+  strengths?: string[];
+  improvements?: string[];
+  summary?: string;
+  details: string[];
+}
+
+// Fallback questions in case API fails
+const fallbackQuestions = [
+  "Tell me about a time when you had to solve a complex problem.",
+  "What are your greatest strengths and weaknesses?",
+  "Why are you interested in this position?",
+  "Describe a situation where you had to work with a difficult team member.",
+  "How do you handle pressure and tight deadlines?",
+];
+
+// Map of interview types to their display names and descriptions
+const interviewTypeMap: Record<string, { name: string; description: string }> = {
+  'software-engineer': {
+    name: 'Software Engineering',
+    description: 'Technical coding questions, system design, and problem-solving'
+  },
+  'product-management': {
+    name: 'Product Management',
+    description: 'Product strategy, prioritization, and execution'
+  },
+  'quality-assurance': {
+    name: 'Test Assurance',
+    description: 'QA processes, testing methodologies, and bug tracking'
+  },
+  'accounting': {
+    name: 'Accounting',
+    description: 'Financial reporting, tax compliance, and accounting principles'
+  },
+  'healthcare': {
+    name: 'Medicine',
+    description: 'Clinical knowledge, patient care, and medical ethics'
+  },
+  'data-science': {
+    name: 'Data Science',
+    description: 'Statistical analysis, machine learning, and data visualization'
+  }
+};
+
+export default function MockInterview() {
+  const { isLoading, generateInterviewQuestion, generateInterviewFeedback } = useGeminiAI();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // Get interview type from URL parameters
+  const interviewType = searchParams.get('type') || 'software-engineer';
+  
+  // Interview flow states
+  const [interviewStarted, setInterviewStarted] = useState(false);
+  const [interviewComplete, setInterviewComplete] = useState(false);
+  const [interviewMode, setInterviewMode] = useState('standard');
+  const [companySpecific, setCompanySpecific] = useState('');
+  
+  // Question and answer management
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [answer, setAnswer] = useState('');
+  
+  // UI states
+  const [isRecording, setIsRecording] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(120); // 2 minutes in seconds
+  const [isLoadingQuestion, setIsLoadingQuestion] = useState(false);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
+  
+  // Feedback states
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackScore, setFeedbackScore] = useState<number | null>(null);
+  const [feedbackDetails, setFeedbackDetails] = useState<string[]>([]);
+  const [overallFeedback, setOverallFeedback] = useState<FeedbackItem[]>([]);
+  
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Only generate questions when the interview is started
+  useEffect(() => {
+    if (interviewStarted) {
+      generateNewQuestion();
+    }
+  }, [interviewStarted]);
+
+  const generateNewQuestion = async () => {
+    setIsLoadingQuestion(true);
+    // Map the interview type to a role for the AI
+    let role = interviewTypeMap[interviewType]?.name || "software engineering";
+    let difficulty = "medium";
+    
+    if (interviewMode === 'stress') {
+      difficulty = "hard";
+    } else if (interviewMode === 'rapid') {
+      difficulty = "easy";
+    }
+    
+    try {
+      // Generate multiple questions at once to avoid waiting between questions
+      const numQuestionsToGenerate = 5;
+      const questionPromises = [];
+      
+      for (let i = 0; i < numQuestionsToGenerate; i++) {
+        questionPromises.push(generateInterviewQuestion(role, difficulty));
+      }
+      
+      const generatedQuestions = await Promise.all(questionPromises);
+      setQuestions(generatedQuestions);
+      
+    } catch (error) {
+      console.error('Error generating questions:', error);
+      setQuestions(fallbackQuestions);
+    } finally {
+      setIsLoadingQuestion(false);
+    }
+  };
+
+  const startRecording = () => {
+    setIsRecording(true);
+    
+    // Start timer for interview mode
+    if (interviewMode === 'rapid' || interviewMode === 'stress') {
+      const timeLimit = interviewMode === 'rapid' ? 60 : 120; // 1 min for rapid, 2 min for stress
+      setTimeLeft(timeLimit);
+      
+      timerRef.current = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            stopRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+  };
+
+  const stopRecording = () => {
+    setIsRecording(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const handleSubmitAnswer = () => {
+    if (answer.trim()) {
+      // Save the answer
+      const newAnswers = [...answers];
+      newAnswers[currentQuestionIndex] = answer;
+      setAnswers(newAnswers);
+      
+      // Clear the current answer for the next question
+      setAnswer('');
+      
+      // Move to the next question or finish the interview
+      if (currentQuestionIndex < questions.length - 1) {
+        moveToNextQuestion();
+      } else {
+        finishInterview(newAnswers);
+      }
+    }
+  };
+
+  const moveToNextQuestion = () => {
+    // If we have an answer for the current question, save it
+    if (answer.trim()) {
+      const newAnswers = [...answers];
+      newAnswers[currentQuestionIndex] = answer;
+      setAnswers(newAnswers);
+      setAnswer('');
+    }
+    
+    // Move to the next question if available
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
+    } else if (answers.filter(a => a.trim()).length > 0) {
+      // If we have at least one answer, finish the interview
+      finishInterview(answers);
+    }
+  };
+
+  const finishInterview = async (completedAnswers: string[]) => {
+    setIsLoadingFeedback(true);
+    
+    try {
+      // Generate feedback for each question-answer pair
+      const feedbackPromises = questions.slice(0, completedAnswers.length).map((question, index) => 
+        generateInterviewFeedback(question, completedAnswers[index])
+      );
+      
+      const feedbackResults = await Promise.all(feedbackPromises);
+      
+      // Process feedback - handle both the new enhanced format and fallback to the old format if needed
+      const processedFeedback = feedbackResults.map(feedback => {
+        // Check if we have the new enhanced feedback format
+        if (feedback && typeof feedback === 'object') {
+          return {
+            score: feedback.score || 75,
+            strengths: feedback.strengths || [],
+            improvements: feedback.improvements || [],
+            summary: feedback.summary || 'Good effort overall.',
+            details: feedback.details || ["Good effort, but try to be more specific."]
+          };
+        }
+        
+        // Fallback to parsing text format if we didn't get structured data
+        // Extract bullet points from feedback
+        const feedbackText = typeof feedback === 'string' ? feedback : '';
+        const feedbackPoints = feedbackText.split('\n')
+          .filter((line: string) => line.trim().startsWith('•') || line.trim().startsWith('-') || line.trim().startsWith('*'))
+          .map((line: string) => line.replace(/^[•\-*]\s*/, '').trim())
+          .filter((line: string) => line.length > 0);
+        
+        // Calculate a score based on the sentiment of the feedback
+        const positiveWords = ['excellent', 'good', 'great', 'strong', 'clear', 'effective', 'well'];
+        const negativeWords = ['improve', 'lacks', 'missing', 'weak', 'unclear', 'could', 'should'];
+        
+        let score = 75; // Default score
+        let positiveCount = 0;
+        let negativeCount = 0;
+        
+        feedbackPoints.forEach((point: string) => {
+          positiveWords.forEach((word: string) => {
+            if (point.toLowerCase().includes(word)) positiveCount++;
+          });
+          negativeWords.forEach((word: string) => {
+            if (point.toLowerCase().includes(word)) negativeCount++;
+          });
+        });
+        
+        if (positiveCount > negativeCount) {
+          score = Math.min(95, 75 + (positiveCount - negativeCount) * 5);
+        } else if (negativeCount > positiveCount) {
+          score = Math.max(50, 75 - (negativeCount - positiveCount) * 5);
+        }
+        
+        // Separate strengths and improvements
+        const strengths = feedbackPoints.filter((point: string) => 
+          positiveWords.some((word: string) => point.toLowerCase().includes(word))
+        );
+        
+        const improvements = feedbackPoints.filter((point: string) => 
+          negativeWords.some((word: string) => point.toLowerCase().includes(word))
+        );
+        
+        return {
+          score: score,
+          strengths: strengths.length > 0 ? strengths : ["Good communication skills"],
+          improvements: improvements.length > 0 ? improvements : ["Add more specific examples"],
+          summary: "Overall satisfactory response with room for improvement.",
+          details: feedbackPoints.length > 0 ? feedbackPoints : ["Good effort, but try to be more specific."]
+        };
+      });
+      
+      setOverallFeedback(processedFeedback);
+      
+      // Calculate average score
+      const averageScore = Math.round(
+        processedFeedback.reduce((sum, item) => sum + item.score, 0) / processedFeedback.length
+      );
+      setFeedbackScore(averageScore);
+      
+      // Combine all feedback details
+      const allDetails = processedFeedback.flatMap(item => item.details);
+      setFeedbackDetails(allDetails);
+      
+    } catch (error) {
+      console.error('Error generating feedback:', error);
+      // Fallback feedback
+      setFeedbackScore(65);
+      setFeedbackDetails(["Your answers were acceptable, but could be improved with more specific examples."]);
+    } finally {
+      setIsLoadingFeedback(false);
+      setShowFeedback(true);
+      setInterviewComplete(true);
+    }
+  };
